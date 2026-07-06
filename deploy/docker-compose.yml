@@ -1,0 +1,37 @@
+# garbageman-in-a-box: a stealth-configured garbageman node, a Tor sidecar, and
+# the libre-recon ban watchdog.  One command:  docker compose up -d --build
+#
+# Set NODE_ADDR in a .env file to your node's public address (clearnet IP or
+# .onion) so the watchdog can tell you when you have been banned.
+
+services:
+  garbageman:
+    build:
+      context: ..            # build context is the repo root (needs libre_recon.py + rotate.sh)
+      dockerfile: deploy/Dockerfile
+    image: garbageman-in-a-box
+    restart: unless-stopped
+    ports:
+      - "8333:8333"          # inbound so LR nodes can dial you (map to your public reachability)
+    volumes:
+      - bitcoin-data:/home/bitcoin/.bitcoin
+
+  tor:
+    image: dperson/torproxy
+    restart: unless-stopped
+    # provides a SOCKS5 proxy at tor:9050 for the watchdog's crawl/banlist checks
+
+  watchdog:
+    image: garbageman-in-a-box
+    depends_on: [garbageman, tor]
+    restart: unless-stopped
+    entrypoint: ["python3", "/opt/recon/libre_recon.py", "watch",
+                 "--addr", "${NODE_ADDR:?set NODE_ADDR in .env}",
+                 "--socks5", "tor:9050", "--interval", "900",
+                 "--on-ban", "/opt/recon/rotate.sh"]
+    # NOTE: rotate.sh restarts the node/onion; in Docker that needs orchestration
+    # (a host cron running `docker compose restart garbageman`, or docker-socket
+    # access). By default the watchdog just alerts in its logs -- see deploy/README.
+
+volumes:
+  bitcoin-data:

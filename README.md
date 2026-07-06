@@ -15,6 +15,8 @@ battlefield the way the other side does.
 
 **New to running a garbageman node?** See [RUNBOOK.md](RUNBOOK.md) for the full operator playbook.
 
+One-command Docker deploy (node + Tor + ban watchdog): [deploy/](deploy/).
+
 ## Usage
 
 ```bash
