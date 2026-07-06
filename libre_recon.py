@@ -214,9 +214,9 @@ def classify(services, ua):
 
 # --- banlist ---------------------------------------------------------------
 def fetch_banlist(url, timeout=30):
-    """Return (ip_networks, n_onion_or_other). Onion/I2P/CJDNS bans can't be IP-matched."""
+    """Return (ip_networks, onion_set, n_other). Matches both IP and .onion bans."""
     raw = urllib.request.urlopen(url, timeout=timeout).read()
-    nets, other = [], 0
+    nets, onions, other = [], set(), 0
     for e in json.loads(raw).get("banned_nets", []):
         a = e.get("address")
         if not a:
@@ -224,13 +224,23 @@ def fetch_banlist(url, timeout=30):
         try:
             nets.append(ipaddress.ip_network(a, strict=False))
         except ValueError:
-            other += 1
-    return nets, other
+            host = a.split("/")[0].lower()
+            if host.endswith(".onion"):
+                onions.add(host)
+            else:
+                other += 1
+    return nets, onions, other
 
 
-def ip_banned(nets, ip):
-    a = ipaddress.ip_address(ip)
-    return any(a in n for n in nets)
+def is_banned(addr, nets, onions):
+    host = addr.split("/")[0].strip().lower()
+    if host.endswith(".onion"):
+        return host in onions
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return any(ip in n for n in nets)
 
 
 # --- modes -----------------------------------------------------------------
@@ -310,15 +320,45 @@ def do_banlist(args):
     any_ok = False
     for name, url in BANLISTS.items():
         try:
-            nets, other = fetch_banlist(url)
+            nets, onions, other = fetch_banlist(url)
         except Exception as e:
             print("%s: fetch failed: %s" % (name, e)); continue
         any_ok = True
-        print("%s: %d IP nets banned (+%d onion/other)" % (name, len(nets), other))
-        if args.ip:
-            print("  %s: %s" % (args.ip, "BANNED" if ip_banned(nets, args.ip) else "not banned"))
+        print("%s: %d IP nets + %d onion banned (+%d other)" % (name, len(nets), len(onions), other))
+        for a in (args.addr or []):
+            print("  %s: %s" % (a, "BANNED" if is_banned(a, nets, onions) else "not banned"))
     if not any_ok:
         print("no banlist fetched")
+
+
+def do_watch(args):
+    """Poll the banlists for your address(es); alert (and optionally run --on-ban) on a new ban."""
+    import os
+    import subprocess
+    state = {a: False for a in args.addr}  # first-observed ban (and every --once run) fires the hook
+    while True:
+        allnets, allonions = [], set()
+        for name, url in BANLISTS.items():
+            try:
+                nets, onions, _ = fetch_banlist(url)
+                allnets += nets; allonions |= onions
+            except Exception as e:
+                print("%s fetch failed: %s" % (name, e))
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        for a in args.addr:
+            hit = is_banned(a, allnets, allonions)
+            print("%s  %-32s %-10s (banlist: %d IP + %d onion)"
+                  % (ts, a, "BANNED" if hit else "ok", len(allnets), len(allonions)))
+            if hit and state[a] is False and args.on_ban:
+                print("  !! %s newly banned -> running --on-ban" % a)
+                try:
+                    subprocess.run(args.on_ban, shell=True, env={**os.environ, "BANNED_ADDR": a})
+                except Exception as e:
+                    print("  on-ban hook failed:", e)
+            state[a] = hit
+        if args.once:
+            break
+        time.sleep(args.interval)
 
 
 def main():
@@ -334,7 +374,14 @@ def main():
     pp = sub.add_parser("probe"); pp.add_argument("targets", nargs="+"); common(pp)
     cp = sub.add_parser("crawl"); cp.add_argument("--seeds", type=int, default=4); common(cp)
     kp = sub.add_parser("check"); kp.add_argument("target"); common(kp)
-    bp = sub.add_parser("banlist"); bp.add_argument("--ip", default=None); common(bp)
+    bp = sub.add_parser("banlist")
+    bp.add_argument("--addr", action="append", help="IP or .onion to check (repeatable)"); common(bp)
+    wp = sub.add_parser("watch")
+    wp.add_argument("--addr", action="append", required=True, help="your node's IP or .onion (repeatable)")
+    wp.add_argument("--interval", type=int, default=900, help="seconds between polls (default 900)")
+    wp.add_argument("--on-ban", default=None, help="shell command to run when newly banned ($BANNED_ADDR is set)")
+    wp.add_argument("--once", action="store_true", help="check once and exit (for cron)")
+    common(wp)
     args = ap.parse_args()
 
     if args.mode == "probe":
@@ -349,6 +396,8 @@ def main():
         do_check(h, p, args)
     elif args.mode == "banlist":
         do_banlist(args)
+    elif args.mode == "watch":
+        do_watch(args)
 
 
 if __name__ == "__main__":

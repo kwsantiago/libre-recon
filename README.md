@@ -25,12 +25,27 @@ python3 libre_recon.py probe 1.2.3.4:8333 5.6.7.8
 # Audit YOUR node: which detection tells expose it as garbageman?
 python3 libre_recon.py check 127.0.0.1:8333
 
-# Check the public Knots banlist (is an address banned?)
-python3 libre_recon.py banlist --ip 1.2.3.4
+# Check the public Knots banlist (IP or .onion)
+python3 libre_recon.py banlist --addr 1.2.3.4 --addr abc...xyz.onion
+
+# Ban-resilience: watch your address(es) and act the moment you're banned
+python3 libre_recon.py watch --addr abc...xyz.onion --interval 900 \
+    --on-ban './rotate.sh'      # $BANNED_ADDR is set for the hook
 ```
 
 Route any command over Tor with `--socks5 127.0.0.1:9050` (recommended for
 `crawl`).
+
+## Ban resilience (churn faster than they ban)
+
+A filtering node is ultimately detectable by what it does not relay, so perfect
+stealth is unreachable; the durable defence is to **rotate faster than the other
+side can ban you**. `watch` polls the public banlists for your node's addresses
+and, on a new ban, runs your `--on-ban` hook with `$BANNED_ADDR` set, wire it to
+a script that rotates your Tor onion (new hidden-service key) or exit IP and
+restarts your node. Run it from cron with `--once`, or leave it looping. Note the
+banlists already carry thousands of onion bans, so Tor buys unlinkability, not
+ban-immunity, rotation is what keeps you in the game.
 
 ## Privacy
 
