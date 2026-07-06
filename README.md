@@ -13,6 +13,8 @@ battlefield the way the other side does.
 - **Pure Python 3 standard library. No dependencies, nothing to install.**
 - Runs direct, behind a VPN, or over Tor.
 
+**New to running a garbageman node?** See [RUNBOOK.md](RUNBOOK.md) for the full operator playbook.
+
 ## Usage
 
 ```bash
